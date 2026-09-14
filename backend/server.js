@@ -1,6 +1,7 @@
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
+import pool from './db.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -11,97 +12,136 @@ app.use(bodyParser.json());
 
 // Generera engångslösenord
 function generateOTP() {
-    // Generera en sexsiffrig numerisk OTP
     const otp = Math.floor(100000 + Math.random() * 900000);
     return otp.toString();
 }
 
-// Arrayer
-const users = [];
-const accounts = [];
-const sessions = [];
-
 // Skapa användare
-app.post('/users', (req, res) => {
+app.post('/users', async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
         return res.status(400).json({ error: 'Användarnamn och lösenord krävs' });
     }
 
-    const newUser = {
-        id: users.length + 1,
-        username,
-        password
-    };
-    users.push(newUser);
+    try {
+        const [result] = await pool.query(
+            'INSERT INTO users (username, password) VALUES (?, ?)',
+            [username, password]
+        );
 
-    const newAccount = {
-        id: accounts.length + 1,
-        userId: newUser.id,
-        amount: 0
-    };
-    accounts.push(newAccount);
+        const userId = result.insertId;
 
-    res.status(201).json(newUser);
+        await pool.query(
+            'INSERT INTO accounts (userId, amount) VALUES (?, 0)',
+            [userId]
+        );
+
+        res.status(201).json({ id: userId, username });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Något gick fel' });
+    }
 });
 
 // Logga in
-app.post('/sessions', (req, res) => {
+app.post('/sessions', async (req, res) => {
     const { username, password } = req.body;
 
-    const user = users.find(
-        (u) => u.username === username && u.password === password
-    );
+    try {
+        const [rows] = await pool.query(
+            'SELECT * FROM users WHERE username = ? AND password = ?',
+            [username, password]
+        );
 
-    if (!user) {
-        return res.status(401).json({ error: 'Fel användarnamn eller lösenord' });
+        if (rows.length === 0) {
+            return res.status(401).json({ error: 'Fel användarnamn eller lösenord' });
+        }
+
+        const user = rows[0];
+        const token = generateOTP();
+
+        await pool.query(
+            'INSERT INTO sessions (userId, token) VALUES (?, ?)',
+            [user.id, token]
+        );
+
+        res.status(200).json({ token });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Något gick fel' });
     }
-
-    const token = generateOTP();
-    sessions.push({ userId: user.id, token });
-
-    res.status(200).json({ token });
 });
 
 // Visa saldo
-app.post('/me/accounts', (req, res) => {
+app.post('/me/accounts', async (req, res) => {
     const { token } = req.body;
 
-    const session = sessions.find((s) => s.token === token);
+    try {
+        const [sessionRows] = await pool.query(
+            'SELECT * FROM sessions WHERE token = ?',
+            [token]
+        );
 
-    if (!session) {
-        return res.status(401).json({ error: 'Ogiltig token' });
+        if (sessionRows.length === 0) {
+            return res.status(401).json({ error: 'Ogiltig token' });
+        }
+
+        const session = sessionRows[0];
+
+        const [accountRows] = await pool.query(
+            'SELECT * FROM accounts WHERE userId = ?',
+            [session.userId]
+        );
+
+        if (accountRows.length === 0) {
+            return res.status(404).json({ error: 'Konto hittades inte' });
+        }
+
+        res.status(200).json({ amount: accountRows[0].amount });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Något gick fel' });
     }
-
-    const account = accounts.find((a) => a.userId === session.userId);
-
-    if (!account) {
-        return res.status(404).json({ error: 'Konto hittades inte' });
-    }
-
-    res.status(200).json({ amount: account.amount });
 });
 
 // Sätt in pengar
-app.post('/me/accounts/transactions', (req, res) => {
+app.post('/me/accounts/transactions', async (req, res) => {
     const { token, amount } = req.body;
 
-    const session = sessions.find((s) => s.token === token);
+    try {
+        const [sessionRows] = await pool.query(
+            'SELECT * FROM sessions WHERE token = ?',
+            [token]
+        );
 
-    if (!session) {
-        return res.status(401).json({ error: 'Ogiltig token' });
+        if (sessionRows.length === 0) {
+            return res.status(401).json({ error: 'Ogiltig token' });
+        }
+
+        const session = sessionRows[0];
+
+        const [accountRows] = await pool.query(
+            'SELECT * FROM accounts WHERE userId = ?',
+            [session.userId]
+        );
+
+        if (accountRows.length === 0) {
+            return res.status(404).json({ error: 'Konto hittades inte' });
+        }
+
+        const newAmount = accountRows[0].amount + amount;
+
+        await pool.query(
+            'UPDATE accounts SET amount = ? WHERE userId = ?',
+            [newAmount, session.userId]
+        );
+
+        res.status(200).json({ amount: newAmount });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Något gick fel' });
     }
-
-    const account = accounts.find((a) => a.userId === session.userId);
-
-    if (!account) {
-        return res.status(404).json({ error: 'Konto hittades inte' });
-    }
-
-    account.amount += amount;
-
-    res.status(200).json({ amount: account.amount });
 });
 
 // Starta servern
