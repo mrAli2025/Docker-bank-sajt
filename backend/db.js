@@ -1,11 +1,11 @@
 import mysql from 'mysql2/promise';
 
 const pool = mysql.createPool({
-    host: 'localhost',
-    port: 8889, // MAMP:s standardport för MySQL, ändra om din är annorlunda
-    user: 'root',
-    password: 'root', // MAMP:s standardlösenord, ändra om du satt ett annat
-    database: 'Bank',
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 8889,
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || 'root',
+    database: process.env.DB_NAME || 'Bank',
 });
 
 export default pool;
