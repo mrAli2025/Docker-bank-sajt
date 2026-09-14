@@ -1,5 +1,8 @@
+
 ## Publicerad sajt
 http://ec2-32-199-182-33.compute-1.amazonaws.com:3000
+
+(Nu med MySQL-databas istället för arrayer, både lokalt och på EC2.)
 
 # Skapa en Banksajt och publicera på aws
 
